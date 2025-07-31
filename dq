@@ -1,36 +1,21 @@
-from pyspark.sql.functions import to_date, col, lit
-
-# Load the tables
-df_rep = spark.table("`gco-application-dev`.dev_application_ode.rep_routing_alignment")
-df_json = spark.table("`gco-application-dev`.dev_application_ode.routingiq_json_input_data")
-
-# Extract date from timestamp
-df_json_clean = df_json.withColumn("appointment_date", to_date("appointment_date_time"))
-
-# Perform LEFT JOIN on customer_id and appointment_date
-dq_mismatch_df = df_json_clean.alias("json").join(
-    df_rep.alias("rep"),
-    (col("json.customer_id") == col("rep.Customer_ID__c")) &
-    (col("json.appointment_date") == col("rep.Date__c")),
-    how="left"
-)
-
-# Add DQ_Rule and filter where records are truly mismatched, excluding both-null
-dq_mismatch_df = dq_mismatch_df.filter(
-    ~(
-        col("json.appointment_date").isNull() & col("rep.Date__c").isNull()
-    ) &
-    (
-        col("rep.Customer_ID__c").isNull() | col("rep.Date__c").isNull()
-    )
-).withColumn("DQ_Rule", lit("DQ_Appointment_Missing_in_Rep"))
-
-# Show result
-dq_mismatch_df.select(
-    col("json.customer_id"),
-    col("json.appointment_date_time"),
-    col("json.appointment_date"),
-    col("rep.Customer_ID__c"),
-    col("rep.Date__c"),
-    col("DQ_Rule")
-).display(truncate=False)
+from pyspark.sql.functions import col, lit
+ 
+# Load full rep_routing_alignment table
+df_rep_full = spark.table(dev_rep_routing_alignment_table)
+ 
+# Get max processing_date for rep_routing_alignment
+max_date_rep = df_rep_full.agg({"processing_date": "max"}).collect()[0][0]
+ 
+# Filter rep table to only latest date
+df_rep = df_rep_full.filter(col("processing_date") == lit(max_date_rep))
+ 
+# -----------------------------------------------
+ 
+# Load full routingiq_json_input_data table
+df_json_full = spark.table(routingiq_json_input_data_table)
+ 
+# Get max processing_date for routingiq_json_input_data
+max_date_json = df_json_full.agg({"processing_date": "max"}).collect()[0][0]
+ 
+# Filter json table to only latest date
+df_json = df_json_full.filter(col("processing_date") == lit(max_date_json))
