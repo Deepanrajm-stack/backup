@@ -7,22 +7,30 @@ df_json = spark.table("`gco-application-dev`.dev_application_ode.routingiq_json_
 # Extract date from timestamp
 df_json_clean = df_json.withColumn("appointment_date", to_date("appointment_date_time"))
 
-# Join on customer_id, appointment_date, and processing_date
+# Perform LEFT JOIN on customer_id and appointment_date
 dq_mismatch_df = df_json_clean.alias("json").join(
     df_rep.alias("rep"),
     (col("json.customer_id") == col("rep.Customer_ID__c")) &
-    (col("json.appointment_date") == col("rep.Date__c")) &
-    (col("json.appointment_date").isNotNull()) &
-    (col("rep.Date__c").isNotNull()),
-    how=""
+    (col("json.appointment_date") == col("rep.Date__c")),
+    how="left"
+)
+
+# Add DQ_Rule and filter where records are truly mismatched, excluding both-null
+dq_mismatch_df = dq_mismatch_df.filter(
+    ~(
+        col("json.appointment_date").isNull() & col("rep.Date__c").isNull()
+    ) &
+    (
+        col("rep.Customer_ID__c").isNull() | col("rep.Date__c").isNull()
+    )
 ).withColumn("DQ_Rule", lit("DQ_Appointment_Missing_in_Rep"))
 
-# Display sample mismatches
+# Show result
 dq_mismatch_df.select(
     col("json.customer_id"),
     col("json.appointment_date_time"),
     col("json.appointment_date"),
-    #col("rep.Customer_ID__c"),
-    #col("rep.Date__c"),
+    col("rep.Customer_ID__c"),
+    col("rep.Date__c"),
     col("DQ_Rule")
 ).display(truncate=False)
