@@ -1,14 +1,4 @@
-# Rename all overlapping columns before union
-for col_name in dq_mismatch_df.columns:
-    if col_name in df_rep.columns and col_name != "DQ_Rule":
-        dq_mismatch_df = dq_mismatch_df.withColumnRenamed(col_name, f"json_{col_name}")
 
-# COMMAND ----------
-
-# Combine all failures
-combined_failures_df = dq1_df.selectExpr("*") \
-    .unionByName(dq2_df, allowMissingColumns=True) \
-    .unionByName(dq3_df, allowMissingColumns=True) \
-    .unionByName(dq4_df, allowMissingColumns=True) \
-    .unionByName(dq5_df, allowMissingColumns=True) \
-    .unionByName(dq_mismatch_df, allowMissingColumns=True)
+json_cols_to_rename = [col_name for col_name in dq_mismatch_df.columns if col_name in df_rep.columns and col_name != "DQ_Rule"]
+for col_name in json_cols_to_rename:
+    dq_mismatch_df = dq_mismatch_df.withColumnRenamed(col_name, f"json_{col_name}")
