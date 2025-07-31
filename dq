@@ -1,0 +1,28 @@
+from pyspark.sql.functions import to_date, col, lit
+
+# Load the tables
+df_rep = spark.table("`gco-application-dev`.dev_application_ode.rep_routing_alignment")
+df_json = spark.table("`gco-application-dev`.dev_application_ode.routingiq_json_input_data")
+
+# Extract date from timestamp
+df_json_clean = df_json.withColumn("appointment_date", to_date("appointment_date_time"))
+
+# Join on customer_id, appointment_date, and processing_date
+dq_mismatch_df = df_json_clean.alias("json").join(
+    df_rep.alias("rep"),
+    (col("json.customer_id") == col("rep.Customer_ID__c")) &
+    (col("json.appointment_date") == col("rep.Date__c")) &
+    (col("json.appointment_date").isNotNull()) &
+    (col("rep.Date__c").isNotNull()),
+    how=""
+).withColumn("DQ_Rule", lit("DQ_Appointment_Missing_in_Rep"))
+
+# Display sample mismatches
+dq_mismatch_df.select(
+    col("json.customer_id"),
+    col("json.appointment_date_time"),
+    col("json.appointment_date"),
+    #col("rep.Customer_ID__c"),
+    #col("rep.Date__c"),
+    col("DQ_Rule")
+).display(truncate=False)
