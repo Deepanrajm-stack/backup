@@ -1,12 +1,12 @@
-# Load rep_routing_alignment table and filter by latest processing_date
 df_rep = spark.table(dev_rep_routing_alignment_table)
 max_date_rep = df_rep.agg({"processing_date": "max"}).collect()[0][0]
-df_rep = df_rep.withColumn("rep_processing_date", col("processing_date")) \
-               .filter(col("rep_processing_date") == lit(max_date_rep))
-
+df_rep = df_rep.filter(col("processing_date") == lit(max_date_rep)) \
+               .drop("processing_date") \
+               .withColumn("processing_date", lit(max_date_rep))
 
 # Load routingiq_json_input_data table and filter by latest processing_date
 df_json = spark.table(routingiq_json_input_data_table)
 max_date_json = df_json.agg({"processing_date": "max"}).collect()[0][0]
-df_json = df_json.withColumn("json_processing_date", col("processing_date")) \
-              .filter(col("json_processing_date") == lit(max_date_json))
+df_json = df_json.filter(col("processing_date") == lit(max_date_json)) \
+                 .drop("processing_date") \
+                 .withColumn("processing_date", lit(max_date_json))
