@@ -1,12 +1,164 @@
-df_rep = spark.table(dev_rep_routing_alignment_table)
-max_date_rep = df_rep.agg({"processing_date": "max"}).collect()[0][0]
-df_rep = df_rep.filter(col("processing_date") == lit(max_date_rep)) \
-               .drop("processing_date") \
-               .withColumn("processing_date", lit(max_date_rep))
+# Databricks notebook source
+# MAGIC %pip install openpyxl
 
-# Load routingiq_json_input_data table and filter by latest processing_date
-df_json = spark.table(routingiq_json_input_data_table)
-max_date_json = df_json.agg({"processing_date": "max"}).collect()[0][0]
-df_json = df_json.filter(col("processing_date") == lit(max_date_json)) \
-                 .drop("processing_date") \
-                 .withColumn("processing_date", lit(max_date_json))
+# COMMAND ----------
+
+from pyspark.sql.functions import col, lit, count
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+from datetime import date
+import pandas as pd
+import tempfile
+import os
+from openpyxl import Workbook
+
+# COMMAND ----------
+
+# MAGIC %run /Workspace/Users/dmuniraj@amgen.com/routingiq_clone/config/routingiq_config.py
+
+# COMMAND ----------
+
+df = spark.table(routingiq_json_input_data_table)  
+max_date_rep = df.agg({"processing_date": "max"}).collect()[0][0]
+df = df.filter(col("processing_date") == lit(max_date_rep))
+dq_failures_list = []
+
+# COMMAND ----------
+
+# ----------- DQ 1: Duplicate customer_id -----------
+dq1_df = df.groupBy("customer_id").count().filter("count > 1") \
+    .withColumn("DQ_Rule", lit("DQ1 - Duplicate customer_id"))
+dq_failures_list.append(dq1_df)
+
+# COMMAND ----------
+
+# ----------- DQ 2–7: Not Null Checks -----------
+not_null_fields = [
+    ("customer_id_masked", "DQ2 - Null customer_id_masked"),
+    ("valuation_segment", "DQ3 - Null valuation_segment"),
+    ("qtr_planned_calls", "DQ4 - Null qtr_planned_calls"),
+    ("urgent_alerts", "DQ5 - Null urgent_alerts"),
+    ("address_priority", "DQ6 - Null address_priority"),
+    ("priority_score", "DQ7 - Null priority_score")
+]
+
+for field, rule in not_null_fields:
+    df_temp = df.filter(col(field).isNull()).withColumn("DQ_Rule", lit(rule))
+    dq_failures_list.append(df_temp)
+
+# COMMAND ----------
+
+# ----------- DQ 8: Not Null - address_id, full_address -----------
+dq8_df = df.filter(col("address_id").isNull() | col("full_address").isNull()) \
+    .withColumn("DQ_Rule", lit("DQ8 - Null address_id or full_address"))
+dq_failures_list.append(dq8_df)
+
+# COMMAND ----------
+
+# ----------- DQ 9: Conditional - lat/lon if customer_id present -----------
+dq9_df = df.filter(
+    col("customer_id").isNotNull() &
+    (col("latitude").isNull() | col("longitude").isNull())
+).withColumn("DQ_Rule", lit("DQ9 - Lat/lon null when customer_id is present"))
+dq_failures_list.append(dq9_df)
+
+# COMMAND ----------
+
+# ----------- DQ 10 & 11: Conditional - Monday times -----------
+dq10_df = df.filter(col("monday_start_time").isNotNull() & col("monday_end_time").isNull()) \
+    .withColumn("DQ_Rule", lit("DQ10 - monday_start_time present but end is null"))
+dq_failures_list.append(dq10_df)
+
+dq11_df = df.filter(col("monday_start_time").isNull() & col("monday_end_time").isNotNull()) \
+    .withColumn("DQ_Rule", lit("DQ11 - monday_end_time present but start is null"))
+dq_failures_list.append(dq11_df)
+
+# COMMAND ----------
+
+# ----------- DQ 12: Same weekday logic for Tue–Fri -----------
+days = ["tuesday", "wednesday", "thursday", "friday"]
+for i, day in enumerate(days):
+    dq12_start_only = df.filter(col(f"{day}_start_time").isNotNull() & col(f"{day}_end_time").isNull()) \
+        .withColumn("DQ_Rule", lit(f"DQ12.{i+1} - {day}_start_time present but end is null"))
+    dq12_end_only = df.filter(col(f"{day}_start_time").isNull() & col(f"{day}_end_time").isNotNull()) \
+        .withColumn("DQ_Rule", lit(f"DQ12.{i+1} - {day}_end_time present but start is null"))
+    
+    dq_failures_list.append(dq12_start_only)
+    dq_failures_list.append(dq12_end_only)
+
+# COMMAND ----------
+
+# ----------- DQ 13 & 14: Not Null checks -----------
+dq13_df = df.filter(col("rep_id").isNull()) \
+    .withColumn("DQ_Rule", lit("DQ13 - Null rep_id"))
+dq14_df = df.filter(col("latitude_rep").isNull() | col("longitude_rep").isNull()) \
+    .withColumn("DQ_Rule", lit("DQ14 - Null rep coordinates"))
+dq_failures_list.extend([dq13_df, dq14_df])
+
+# COMMAND ----------
+
+# ----------- DQ 15: Duplicate rep_id + lat/lon combination -----------
+dq15_df = df.groupBy("rep_id", "latitude_rep", "longitude_rep") \
+    .count().filter("count > 1") \
+    .withColumn("DQ_Rule", lit("DQ15 - Duplicate rep_id with same coordinates"))
+dq_failures_list.append(dq15_df)
+
+# COMMAND ----------
+
+if dq_failures_list:
+    combined_failures_df = dq_failures_list[0]
+    for df_piece in dq_failures_list[1:]:
+        combined_failures_df = combined_failures_df.unionByName(df_piece, allowMissingColumns=True)
+        
+        failure_count = combined_failures_df.count()
+
+    if failure_count > 0:
+        dq_check_summary_df = combined_failures_df.groupBy("DQ_Rule").count().toPandas()
+        dq_check_summary_html = dq_check_summary_df.to_html(index=False, escape=False)
+
+        sample_failures_pdf = combined_failures_df.limit(10).toPandas()
+        sample_failures_html = sample_failures_pdf.to_html(index=False, escape=False)
+
+        tmp_excel_path = os.path.join(tempfile.gettempdir(), "DQ_Failures_Sample.xlsx")
+        with pd.ExcelWriter(tmp_excel_path, engine='openpyxl') as writer:
+            sample_failures_pdf.to_excel(writer, sheet_name="SampleFailures", index=False)
+
+        email_body = f"""
+        <h3>Data Quality Check - Summary</h3>
+        <p><strong>Total Failed Records:</strong> {failure_count}</p>
+
+        <h4>DQ Check Type:</h4>
+        {dq_check_summary_html}
+
+        <h4>Sample Failed Records:</h4>
+        {sample_failures_html}
+        <p>Excel file with sample records attached.</p>
+        """
+
+        from_email = "dmuniraj@amgen.com"
+        to_email = "dmuniraj@amgen.com"
+        recipients = [to_email]
+
+        msg = MIMEMultipart()
+        msg["From"] = from_email
+        msg["To"] = ", ".join(recipients)
+        msg["Subject"] = "Post Data Quality Check - Summary"
+        msg.attach(MIMEText(email_body, "html"))
+
+        with open(tmp_excel_path, "rb") as f:
+            part = MIMEApplication(f.read(), _subtype='octet-stream')
+            part.add_header("Content-Disposition", "attachment", filename="DQ_Failures_Sample.xlsx")
+            msg.attach(part)
+
+        try:
+            with smtplib.SMTP("mailhost-i.amgen.com") as server:
+                server.sendmail(from_email, recipients, msg.as_string())
+            print("DQ issues found. Notification sent with Excel attachment.")
+        except Exception as e:
+            print(f"Failed to send email: {e}")
+    else:
+        print("No DQ failures found.")
+else:
+    print("All DQ checks passed.")
