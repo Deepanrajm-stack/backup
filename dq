@@ -7,8 +7,22 @@ Category -  CASE
        ELSE 'New'
     END AS Category
 study_title
-study_type
+study_type - Type of study
 cost_year_2
 cost_year_3
 cost_year_4
 cost_year_next_year
+
+
+finance : 
+
+core.Gates AS Status, - Study Phases
+Study_Title as Title, - Title of the study
+Therapeutic_Area AS TAG, - Therapeutic area linked to product
+    core.LOS_In_USD::numeric as LOS, - Total LOS in USD
+    core.Cost_Year_next_Year::numeric AS this_year, - Projected cost for next year
+    core.Cost_Year_2::numeric AS next_year_2, - Projected cost in second year
+    core.Cost_Year_3::numeric AS next_year_3, - Projected cost in third year
+    core.Cost_Year_4::numeric AS next_year_4, - Projected cost in fourth year
+
+
