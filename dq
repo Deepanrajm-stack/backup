@@ -1,16 +1,14 @@
-| **Function/Section**                                             | **Purpose**                                                                                                                                                                                                                                 |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1. Load Config & Tables**                                      | Loads configuration values and reads the latest snapshots of `rep_routing_alignment` and `routingiq_json_input_data` tables, filtering for the most recent `processing_date`.                                                               |
-| **2. DQ1: Duplicate `Account__c`**                               | Identifies duplicate records by `Account__c`.                                                                                                                                                                                               |
-| **3. DQ2: Missing Latitude/Longitude**                           | Flags records where `Account__c` exists but latitude/longitude values are missing.                                                                                                                                                          |
-| **4. DQ3: Invalid Distance for Specific Types**                  | Checks if distance is populated when `Type__c` is one of `"Walkin"`, `"Appointment"`, or `"Call"` and location is missing.                                                                                                                  |
-| **5. DQ4: Travel Type without Distance**                         | Ensures that when `Type__c = Travel` and `Account__c` is null, the `Distance__c` is populated.                                                                                                                                              |
-| **6. DQ5: Null Expected Fields for Type = 'Wait'**               | Flags records where non-relevant fields are populated when `Type__c = Wait`. These fields should be null in such cases.                                                                                                                     |
-| **7. DQ6: Appointments Present in JSON but Missing in Rep Data** | Compares `appointment_date` in the JSON table with corresponding entries in `rep_routing_alignment` to check for mismatches or missing records.                                                                                             |
-| **8. Combine All DQ Failures**                                   | Consolidates all individual DQ failure DataFrames into a single unified DataFrame.                                                                                                                                                          |
-| **9. Email Notification with Summary**                           | If any DQ failures are found: <ul><li>Generates HTML summary table grouped by DQ Rule</li><li>Collects sample failure records (limit 10)</li><li>Exports to Excel</li><li>Sends an email with the summary and attached Excel file</li></ul> |
-| **10. Excel Output**                                             | Stores sample failed records in `DQ_Failures_Sample.xlsx` using `pandas` and `openpyxl`.                                                                                                                                                    |
-| **11. Email Sending Logic**                                      | Sends the report via `smtplib` using Amgen’s mail relay (`mailhost-i.amgen.com`) to the configured recipients.                                                                                                                              |
+edf_dev.edf_dev_cdl_res_aueg_publish.t2_los_and_geographic
 
-
-This notebook validates the integrity of data in the rep_routing_alignment table and ensures consistency with the routingiq_json_input_data table. It runs a series of rule-based data quality checks to detect duplicates, missing values, and misaligned appointments. Upon identifying any issues, it generates a summary report and sends a notification email with sample failed records and an Excel attachment for review.
+Year,
+LOS, - Pivot it based on the 4 columns and LOS values against it 
+Category -  CASE 
+       WHEN t.gates IN ('Fully Funded', 'In Flight') THEN 'On Going'
+       ELSE 'New'
+    END AS Category
+study_title
+study_type
+cost_year_2
+cost_year_3
+cost_year_4
+cost_year_next_year
